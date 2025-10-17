@@ -94,7 +94,7 @@ class EmbeddingsConfig:
 @dataclass
 class NLPConfig:
     """NLP configuration"""
-    spacy_model: str = 'en_core_web_lg' 
+    spacy_model: str = 'zh_core_web_sm'
 
 
 @dataclass

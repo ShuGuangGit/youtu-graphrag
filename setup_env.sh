@@ -1,16 +1,16 @@
 #!/bin/bash
-
-# Upgrade pip
-echo "📦 Upgrading pip..."
-pip install --upgrade pip
-
-# Install requirements
-echo "📦 Installing requirements..."
-pip install -r requirements.txt
+#
+## Upgrade pip
+#echo "📦 Upgrading pip..."
+#pip install --upgrade pip
+#
+## Install requirements
+#echo "📦 Installing requirements..."
+#pip install -r requirements.txt
 
 # Download spaCy model
 echo "🧠 Downloading spaCy English model..."
-python -m spacy download en_core_web_lg # If using Chinese mode, the corresponding Chinese database should be used here.
+python -m spacy download zh_core_web_sm # If using Chinese mode, the corresponding Chinese database should be used here.
 
 # Download default HuggingFace models
 echo "🧠 Downloading default retriever model..."
