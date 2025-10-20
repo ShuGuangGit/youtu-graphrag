@@ -11,6 +11,7 @@ from langfuse import Langfuse
 from langfuse.openai import openai
 
 from utils.logger import logger
+from utils.session_manager import ensure_session
 
 load_dotenv()
 
@@ -21,7 +22,7 @@ class LLMCompletionCall:
         self.llm_api_key = os.getenv("LLM_API_KEY", "")
         if not self.llm_api_key:
             raise ValueError("LLM API key not provided")
-        
+
         # Langfuse 配置
         self.enable_langfuse = enable_langfuse and self._is_langfuse_configured()
         self.langfuse = None
@@ -32,7 +33,7 @@ class LLMCompletionCall:
                 host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
             )
             logger.info("Langfuse 观测已启用")
-        
+
         self.openai_provider = os.getenv("OPENAI_PROVIDER", "openai").lower()
         if self.openai_provider == "azure":
             self.api_version = os.getenv("API_VERSION", "2025-01-01-preview")
@@ -53,42 +54,76 @@ class LLMCompletionCall:
             if self.enable_langfuse:
                 # 使用 Langfuse 包装的 OpenAI 客户端
                 self.client = openai.OpenAI(
-                    base_url=self.llm_base_url, 
+                    base_url=self.llm_base_url,
                     api_key=self.llm_api_key
                 )
             else:
                 self.client = OpenAI(base_url=self.llm_base_url, api_key = self.llm_api_key)
-    
+
     def _is_langfuse_configured(self) -> bool:
         """检查 Langfuse 配置是否完整"""
         required_keys = ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"]
         return all(os.getenv(key) for key in required_keys)
 
-    def call_api(self, content: str, session_id: Optional[str] = None, 
+    def call_api(self, content: str, session_id: Optional[str] = None,
                  user_id: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Call API to generate text with retry mechanism and Langfuse observability.
-        
+
         Args:
             content: Prompt content
-            session_id: Optional session ID for tracking
-            user_id: Optional user ID for tracking
+            session_id: Optional session ID for tracking (如果为None，将自动使用当前线程的会话ID)
+            user_id: Optional user ID for tracking (如果为None，将自动使用当前线程的用户ID)
             metadata: Optional metadata for tracking
-            
+
         Returns:
             Generated text response
         """
-        
+
+        # 确保当前线程有会话
+        current_session = ensure_session()
+
+        # 如果没有提供 session_id 或 user_id，使用当前线程的会话信息
+        if session_id is None:
+            session_id = current_session.session_id
+        if user_id is None:
+            user_id = current_session.user_id
+
+        # 合并元数据
+        current_metadata = current_session.metadata.copy()
+        if metadata:
+            current_metadata.update(metadata)
+
+        logger.info(f"LLM api calling. enable_langfuse: {self.enable_langfuse}")
+        logger.info(f"LLM api calling. session.session_id: {session_id}")
+        logger.info(f"LLM api calling. session.user_id: {user_id}")
         # 创建 Langfuse trace（如果启用）
         trace = None
         if self.enable_langfuse and self.langfuse:
-            trace = self.langfuse.trace(
-                name="llm_completion_call",
-                session_id=session_id,
-                user_id=user_id,
-                metadata=metadata or {}
-            )
-            
+            try:
+                # 使用新的 Langfuse API
+                trace = self.langfuse.trace(
+                    name="llm_completion_call",
+                    session_id=session_id,
+                    user_id=user_id,
+                    metadata=current_metadata
+                )
+            except AttributeError:
+                # 如果 trace 方法不存在，尝试使用其他方法
+                try:
+                    # 尝试使用 create_trace 方法
+                    trace = self.langfuse.create_trace(
+                        name="llm_completion_call",
+                        session_id=session_id,
+                        user_id=user_id,
+                        metadata=current_metadata
+                    )
+                except AttributeError:
+                    # 如果都不存在，记录警告并继续
+                    logger.warning("Langfuse trace method not available, skipping trace creation")
+                    trace = None
+        logger.info(f"LLM api calling. trace: {trace}")
+
         try:
             # 记录输入
             if trace:
@@ -98,7 +133,7 @@ class LLMCompletionCall:
                     input=content,
                     temperature=0.3
                 )
-            
+
             completion = self.client.chat.completions.create(
                 model=self.llm_model,
                 messages=[{"role": "user", "content": content}],
@@ -106,7 +141,7 @@ class LLMCompletionCall:
             )
             raw = completion.choices[0].message.content or ""
             clean_completion = self._clean_llm_content(raw)
-            
+
             # 记录输出和完成状态
             if trace:
                 trace.generation(
@@ -122,9 +157,9 @@ class LLMCompletionCall:
                     }
                 )
                 trace.update(status="completed")
-            
+
             return clean_completion
-            
+
         except Exception as e:
             # 记录错误
             if trace:
@@ -134,7 +169,7 @@ class LLMCompletionCall:
         finally:
             # 确保 trace 被刷新
             if trace and self.langfuse:
-                self.langfuse.flush() 
+                self.langfuse.flush()
 
     def _clean_llm_content(self, text: str) -> str:
         if not isinstance(text, str):
