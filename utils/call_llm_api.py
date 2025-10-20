@@ -9,6 +9,7 @@ from openai import OpenAI, AzureOpenAI
 from dotenv import load_dotenv
 from langfuse import Langfuse
 from langfuse.openai import openai
+from langfuse import observe
 
 from utils.logger import logger
 from utils.session_manager import ensure_session
@@ -97,42 +98,34 @@ class LLMCompletionCall:
         logger.info(f"LLM api calling. enable_langfuse: {self.enable_langfuse}")
         logger.info(f"LLM api calling. session.session_id: {session_id}")
         logger.info(f"LLM api calling. session.user_id: {user_id}")
-        # 创建 Langfuse trace（如果启用）
-        trace = None
+        
+        # 使用装饰器方式记录 Langfuse 观测
         if self.enable_langfuse and self.langfuse:
-            try:
-                # 使用新的 Langfuse API
-                trace = self.langfuse.trace(
-                    name="llm_completion_call",
-                    session_id=session_id,
-                    user_id=user_id,
-                    metadata=current_metadata
-                )
-            except AttributeError:
-                # 如果 trace 方法不存在，尝试使用其他方法
-                try:
-                    # 尝试使用 create_trace 方法
-                    trace = self.langfuse.create_trace(
-                        name="llm_completion_call",
-                        session_id=session_id,
-                        user_id=user_id,
-                        metadata=current_metadata
-                    )
-                except AttributeError:
-                    # 如果都不存在，记录警告并继续
-                    logger.warning("Langfuse trace method not available, skipping trace creation")
-                    trace = None
-        logger.info(f"LLM api calling. trace: {trace}")
-
+            return self._call_api_with_langfuse(content, session_id, user_id, current_metadata)
+        else:
+            return self._call_api_simple(content)
+    
+    def _call_api_simple(self, content: str) -> str:
+        """简单的 API 调用，不使用 Langfuse"""
         try:
-            # 记录输入
-            if trace:
-                trace.generation(
-                    name="llm_generation",
-                    model=self.llm_model,
-                    input=content,
-                    temperature=0.3
-                )
+            completion = self.client.chat.completions.create(
+                model=self.llm_model,
+                messages=[{"role": "user", "content": content}],
+                temperature=0.3
+            )
+            raw = completion.choices[0].message.content or ""
+            return self._clean_llm_content(raw)
+        except Exception as e:
+            logger.error(f"LLM api calling failed. Error: {e}")
+            raise e
+    
+    @observe(as_type="generation")
+    def _call_api_with_langfuse(self, content: str, session_id: str, user_id: str, metadata: Dict[str, Any]) -> str:
+        """使用 Langfuse 装饰器观测的 API 调用"""
+        try:
+            self.langfuse.update_current_trace(session_id=session_id)
+            self.langfuse.update_current_trace(user_id=user_id)
+            self.langfuse.update_current_trace(metadata=metadata)
 
             completion = self.client.chat.completions.create(
                 model=self.llm_model,
@@ -141,35 +134,11 @@ class LLMCompletionCall:
             )
             raw = completion.choices[0].message.content or ""
             clean_completion = self._clean_llm_content(raw)
-
-            # 记录输出和完成状态
-            if trace:
-                trace.generation(
-                    name="llm_generation",
-                    model=self.llm_model,
-                    input=content,
-                    output=clean_completion,
-                    temperature=0.3,
-                    usage={
-                        "prompt_tokens": completion.usage.prompt_tokens if completion.usage else 0,
-                        "completion_tokens": completion.usage.completion_tokens if completion.usage else 0,
-                        "total_tokens": completion.usage.total_tokens if completion.usage else 0
-                    }
-                )
-                trace.update(status="completed")
-
             return clean_completion
-
+            
         except Exception as e:
-            # 记录错误
-            if trace:
-                trace.update(status="error", output=str(e))
             logger.error(f"LLM api calling failed. Error: {e}")
             raise e
-        finally:
-            # 确保 trace 被刷新
-            if trace and self.langfuse:
-                self.langfuse.flush()
 
     def _clean_llm_content(self, text: str) -> str:
         if not isinstance(text, str):
