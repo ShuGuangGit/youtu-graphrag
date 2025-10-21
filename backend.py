@@ -791,15 +791,15 @@ async def ask_question(request: QuestionRequest, client_id: str = "default"):
             loop_chunk_contents = _merge_chunk_contents(loop_chunk_ids, all_chunk_contents)
             loop_ctx = "=== Triples ===\n" + "\n".join(loop_triples[:20]) + "\n=== Chunks ===\n" + "\n".join(loop_chunk_contents[:10])
             loop_prompt = f"""
-You are an expert knowledge assistant using iterative retrieval with chain-of-thought reasoning.
-Current Question: {question}
-Current Iteration Query: {current_query}
-Knowledge Context:\n{loop_ctx}
-Previous Thoughts: {' | '.join(thoughts) if thoughts else 'None'}
-Instructions:
-1. If enough info answer with: So the answer is: <answer>
-2. Else propose new query with: The new query is: <query>
-Your reasoning:
+你是一位专业的知识助手，采用基于思维链（chain-of-thought）推理的迭代检索方法。
+当前问题: {question}
+当前迭代查询: {current_query}
+知识上下文:\n{loop_ctx}
+先前的推理步骤: {' | '.join(thoughts) if thoughts else 'None'}
+指令:
+1. 如果已有足够信息，请回答: 因此答案是: <answer>
+2. 否则，请提出新的查询: 新的问题是: <query>
+你的推理:
 """
             try:
                 reasoning = await loop.run_in_executor(None, lambda: kt_retriever.generate_answer(loop_prompt))

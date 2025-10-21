@@ -41,12 +41,23 @@ class KTBuilder:
 
 
     def chunk_text(self, text) -> Tuple[List[str], Dict[str, str]]:
+        """
+        对上传的文本进行拆分
+
+        :param text: 输入的文本内容，可以是字符串或包含'title'和'text'键的字典
+        :return: 元组类型，包含两个元素：
+                 - List[str]: 文本块列表
+                 - Dict[str, str]: 文本块ID到文本内容的映射字典
+        """
+        # 根据数据集名称判断是否需要对文本进行特殊处理
         if self.dataset_name in self.datasets_no_chunk:
-            chunks = [f"{text.get('title', '')} {text.get('text', '')}".strip() 
+            chunks = [f"{text.get('title', '')} {text.get('text', '')}".strip()
                      if isinstance(text, dict) else str(text)]
         else:
+            # 其他数据集直接将文本作为单个文本块
             chunks = [str(text)]
 
+        # 为每个文本块生成唯一ID并建立映射关系
         chunk2id = {}
         for chunk in chunks:
             try:
@@ -55,6 +66,7 @@ class KTBuilder:
             except Exception as e:
                 logger.warning(f"Failed to generate chunk id with nanoid: {type(e).__name__}: {e}")
 
+        # 使用线程锁保护共享资源，更新全局文本块映射
         with self.lock:
             self.all_chunks.update(chunk2id)
 
@@ -84,6 +96,26 @@ class KTBuilder:
         return cleaned if cleaned else "[EMPTY_AFTER_CLEANING]"
     
     def save_chunks_to_file(self):
+        """
+        将数据块保存到文件中
+
+        该函数将当前对象中的所有数据块保存到指定的文件中。如果文件已存在，
+        则会先读取现有数据并与当前数据合并，避免数据丢失。
+
+        参数:
+            self: 类实例，包含以下属性：
+                - dataset_name: 数据集名称，用于生成文件名
+                - all_chunks: 字典类型，包含待保存的数据块，格式为 {chunk_id: chunk_text}
+
+        返回值:
+            无返回值
+
+        功能说明:
+            1. 创建输出目录
+            2. 读取已存在的数据块文件（如果存在）
+            3. 合并现有数据和新数据
+            4. 将合并后的数据写入文件
+        """
         os.makedirs("output/chunks", exist_ok=True)
         chunk_file = f"output/chunks/{self.dataset_name}.txt"
         
@@ -102,9 +134,11 @@ class KTBuilder:
                                 existing_data[chunk_id] = chunk_text
             except Exception as e:
                 logger.warning(f"Failed to parse existing chunks from {chunk_file}: {type(e).__name__}: {e}")
-        
+
+        # 合并已存在的数据和新的数据块，新数据会覆盖同ID的旧数据
         all_data = {**existing_data, **self.all_chunks}
-        
+
+        # 将所有数据写入文件，每行格式为 "id: {chunk_id}\tChunk: {chunk_text}"
         with open(chunk_file, "w", encoding="utf-8") as f:
             for chunk_id, chunk_text in all_data.items():
                 f.write(f"id: {chunk_id}\tChunk: {chunk_text}\n")
@@ -112,8 +146,20 @@ class KTBuilder:
         logger.info(f"Chunk data saved to {chunk_file} ({len(all_data)} chunks)")
     
     def extract_with_llm(self, prompt: str):
+        """
+        使用大语言模型从给定提示中提取信息并返回格式化的JSON字符串
+
+        参数:
+            prompt (str): 发送给大语言模型的提示文本
+
+        返回:
+            str: 解析后的大语言模型响应，以JSON字符串格式返回
+        """
+        # 调用大语言模型API获取响应
         response = self.llm_client.call_api(prompt)
+        # 修复并解析JSON格式的响应内容
         parsed_dict = json_repair.loads(response)
+        # 将解析后的字典转换为格式化的JSON字符串
         parsed_json = json.dumps(parsed_dict, ensure_ascii=False)
         return parsed_json 
 
@@ -122,10 +168,19 @@ class KTBuilder:
         return len(encoding.encode(text))
     
     def _get_construction_prompt(self, chunk: str) -> str:
+        """
+        根据数据集名称和模式（agent/noagent）获取相应的构造提示词。
+
+        Args:
+            chunk (str): 输入的文本块，用于构造提示词的上下文
+
+        Returns:
+            str: 格式化后的构造提示词字符串
+        """
         """Get the appropriate construction prompt based on dataset name and mode (agent/noagent)."""
         recommend_schema = json.dumps(self.schema, ensure_ascii=False)
         
-        # Base prompt type mapping
+        # 基础提示词类型映射
         prompt_type_map = {
             "novel": "novel",
             "novel_eng": "novel_eng"
@@ -133,7 +188,7 @@ class KTBuilder:
         
         base_prompt_type = prompt_type_map.get(self.dataset_name, "general")
         
-        # Add agent suffix if in agent mode
+        # 如果处于agent模式，则添加agent后缀
         if self.mode == "agent":
             prompt_type = f"{base_prompt_type}_agent"
         else:

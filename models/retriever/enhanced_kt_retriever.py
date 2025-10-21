@@ -1686,7 +1686,23 @@ class KTRetriever:
             elif self.dataset == 'novel_eng':
                 return self.config.get_prompt_formatted("retrieval", "novel_eng", question=question, context=context)
             else:
-                return self.config.get_prompt_formatted("retrieval", "general", question=question, context=context)
+                return f"""
+你是一位专业的知识助手，任务是根据所提供的知识上下文回答问题。
+
+1.仅使用所提供的知识上下文中的信息，并尽最大努力回答问题。
+2.如果知识不足，则拒绝回答该问题。
+3.回答需准确且简洁。
+4.对于事实性问题，请提供具体的事实或实体名称。
+5.对于时间相关问题，请提供具体的日期、年份或时间段。
+
+问题:{question}
+
+知识上下文:
+{context}
+
+答案(请具体且直接):
+                """
+                # return self.config.get_prompt_formatted("retrieval", "general", question=question, context=context)
         else:
             if self.dataset == 'novel':
                 prompt = f"""
@@ -1716,14 +1732,14 @@ class KTRetriever:
                 """
             else:
                 prompt = f"""
-                You are an expert knowledge assistant. Your task is to answer the question based on the provided knowledge context.
+                你是一位专业的知识助手，任务是根据所提供的知识上下文回答问题。
 
-                1. Use ONLY the information from the provided knowledge context and try your best to answer the question.
-                2. If the knowledge is insufficient, reject to answer the question.
-                3. Be precise and concise in your answer
-                4. For factual questions, provide the specific fact or entity name
-                5. For temporal questions, provide the specific date, year, or time period
-
+                1.仅使用所提供的知识上下文中的信息，并尽最大努力回答问题。
+                2.如果知识不足，则将网络中的检索信息整理出答案。
+                3.回答需准确且简洁。
+                4.对于事实性问题，请提供具体的事实或实体名称。
+                5.对于时间相关问题，请提供具体的日期、年份或时间段。
+                
                 Question: {question}
 
                 Knowledge Context:
